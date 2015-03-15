@@ -1,6 +1,3 @@
-'''
-Needs some re-design but it looks like it works..
-'''
 import sys
 import serial
 
@@ -10,18 +7,23 @@ class ChecksumFailed(Exception):
 
 
 class MindwaveAdapter(object):
+    # Allow users overriding (asic_eeg needs to be configured for it)
+    waves = [
+        'delta', 'theta', 'low_alpha', 'high_alpha',
+        'low_beta', 'high_beta', 'low_gamma', 'mid_gamma'
+    ]
 
     def __init__(self, port='/dev/rfcomm0', baudrate=57600,
-                 timeout=10):
+                 timeout=10, skip_raw_wave=True):
         self.sensor = serial.Serial(port, baudrate, timeout=10)
 
         self.codes = {
-            2: self.poor_signal,
-            4: self.attention,
-            5: self.meditation,
-            16: self.blink_strength,
-            80: self.raw_wave,
-            83: self.asic_eeg,
+            2: ('poor_signal', self.read_default_value),
+            4: ('attention', self.read_default_value),
+            5: ('meditation', self.read_default_value),
+            16: ('blink_strength', self.read_default_value),
+            80: ('raw_wave', self.raw_wave),
+            83: ('asic_eeg', self.asic_eeg),
         }
 
         version = sys.version_info.major
@@ -52,6 +54,7 @@ class MindwaveAdapter(object):
     def _read_packet(self, length):
         result = []
         checksum = 0
+
         for i in range(0, length):
             value = self._read(1)
             checksum += int(value, 16)
@@ -83,21 +86,9 @@ class MindwaveAdapter(object):
     def _big_endian(self, byte_input):
         return byte_input[0] * 2 ** 16 + byte_input[1] * 2 ** 8 + byte_input[2]
 
-    def poor_signal(self, payload, i):
+    def read_default_value(self, payload, i):
         i += 1
-        return 'poor_signal', int(payload[i], 16), i + 1
-
-    def attention(self, payload, i):
-        i += 1
-        return 'attention', int(payload[i], 16), i + 1
-
-    def meditation(self, payload, i):
-        i += 1
-        return 'meditation', int(payload[i], 16), i + 1
-
-    def blink_strength(self, payload, i):
-        i += 1
-        return 'blink_strength', int(payload[i], 16), i + 1
+        return int(payload[i], 16), i + 1
 
     def raw_wave(self, payload, i):
         length = int(payload[i + 1])
@@ -114,13 +105,9 @@ class MindwaveAdapter(object):
         if value >= 32768:
             value -= 65536
 
-        return 'raw', value, end + 1
+        return value, end + 1
 
     def asic_eeg(self, payload, i):
-        waves = [
-            'delta', 'theta', 'low_alpha', 'high_alpha',
-            'low_beta', 'high_beta', 'low_gamma', 'mid_gamma'
-        ]
         i = i + 1
         # According to the docs the lenght is 24
         # 3 bytes per wave (listed above)
@@ -133,8 +120,9 @@ class MindwaveAdapter(object):
         result = {}
         start = i
         end = i + 3
+
         for count in range(0, 8):
-            wave = waves[count]
+            wave = self.waves[count]
             numbers = [int(num, 16) for num in payload[start:end]]
 
             start = end
@@ -142,15 +130,16 @@ class MindwaveAdapter(object):
             value = self._big_endian(numbers)
             result[wave] = value
 
-        return 'asic_eeg', result, i + length
+        return result, i + length
 
     def get_payload_values(self, payload, length):
         result = {}
         i = 0
+
         while i < length:
             code = payload[i]
-            func = self.codes[int(code)]
-            func_name, value, i, = func(payload, i)
+            func_name, func = self.codes[int(code)]
+            value, i, = func(payload, i)
             result[func_name] = value
 
         return result
@@ -164,11 +153,15 @@ class MindwaveAdapter(object):
             try:
                 payload = self._read_packet(length)
                 result = self.get_payload_values(payload, length)
-                if len(result.keys()) != 1:
-                    print(result)
+
+                if self.skip_raw_wave and result.keys() == ['raw_wave']:
+                    continue
+                else:
+                    yield result
             except ChecksumFailed:
                 continue
 
 
-adapter = MindwaveAdapter()
-adapter.start()
+if __name__ == '__main__':
+    adapter = MindwaveAdapter()
+    adapter.start()
