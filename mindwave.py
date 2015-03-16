@@ -1,4 +1,6 @@
+import codecs
 import sys
+
 import serial
 
 
@@ -38,7 +40,6 @@ class MindwaveAdapter(object):
         return input_bytes.encode('hex')
 
     def _encode_v3(self, input_bytes):
-        import codecs
         result = codecs.encode(input_bytes, 'hex')
         result = str(result, 'ascii')
         return result
@@ -46,6 +47,7 @@ class MindwaveAdapter(object):
     def _read(self, bytes_leng, to_int=False):
         result = self.sensor.read(bytes_leng)
         result = self.encode(result)
+
         if to_int:
             return int(result, 16)
         else:
@@ -74,6 +76,11 @@ class MindwaveAdapter(object):
             return result
 
     def _wait_for_ready_state(self):
+        '''
+        This reads the sync bytes.
+        For every packet the first 2 bytes are "aa" and "aa"
+        Indicating that we are ready to use the packet
+        '''
         while self.sensor.isOpen():
             a = self._read(1)
             b = self._read(1)
@@ -144,12 +151,18 @@ class MindwaveAdapter(object):
 
         return result
 
-    def start(self):
+    def values(self):
         sensor = self.sensor
 
         while sensor.isOpen():
             self._wait_for_ready_state()
             length = self._read(1, to_int=True)
+
+            if length > 169:
+                # Docs: Any higher value indicates an error (PLENGTH TOO LARGE)
+                print('Invalid length skipping packet ({})'.format(length))
+                continue
+
             try:
                 payload = self._read_packet(length)
                 result = self.get_payload_values(payload, length)
@@ -164,4 +177,5 @@ class MindwaveAdapter(object):
 
 if __name__ == '__main__':
     adapter = MindwaveAdapter()
-    adapter.start()
+    for value in adapter.values():
+        print(value)
