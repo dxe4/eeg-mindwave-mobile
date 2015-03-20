@@ -18,6 +18,7 @@ class MindwaveAdapter(object):
     def __init__(self, port='/dev/rfcomm0', baudrate=57600,
                  timeout=10, skip_raw_wave=True):
         self.sensor = serial.Serial(port, baudrate, timeout=10)
+        self.skip_raw_wave = skip_raw_wave
 
         self.codes = {
             2: ('poor_signal', self.read_default_value),
